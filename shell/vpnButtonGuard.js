@@ -85,7 +85,8 @@ export class VpnButtonGuard {
             // Rebuild from current NM state, which may have changed while wt0 was hidden.
             for (const connection of this._toggle._client?.get_connections() ?? [])
                 this._toggle._addConnection(connection);
-            this._toggle._syncActiveConnections();
+            if (this._toggle._client)
+                this._toggle._syncActiveConnections();
             this._toggle._sync();
         }
         this._quickSettings = null;
@@ -108,7 +109,9 @@ export class VpnButtonGuard {
             if (isNetBirdConnection(connection))
                 this._toggle._removeConnection(connection);
         }
-        this._toggle._syncActiveConnections();
+        // At login the toggle can exist before its NM client; setClient() syncs later.
+        if (this._toggle._client)
+            this._toggle._syncActiveConnections();
         this._toggle._sync();
         this._vpnSignal = this._toggle.connect('notify::checked', () => {
             if (this._blocked)

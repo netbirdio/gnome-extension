@@ -28,10 +28,26 @@ function durationMilliseconds(value) {
     return match ? number(Math.round(Number(match[1]) * 1000)) : 0;
 }
 
+// The daemon only reports SessionExpired to clients that wait on Up; others see
+// NeedsLogin. The management error and the session deadline tell them apart.
+function sessionState(state, managementError, sessionExpiresAt) {
+    if (state !== 'NeedsLogin')
+        return state;
+    if (/(login|session) (has )?expired/i.test(managementError))
+        return 'SessionExpired';
+    if (sessionExpiresAt > 0 && sessionExpiresAt * 1000 <= Date.now())
+        return 'SessionExpired';
+    return state;
+}
+
 export function normalizeStatus(data) {
     const fullStatus = data?.fullStatus ?? {};
     const local = fullStatus.localPeerState ?? {};
-    const state = string(data?.status) || 'Unknown';
+    const sessionExpiresAt = timestampSeconds(data?.sessionExpiresAt);
+    const state = sessionState(
+        string(data?.status) || 'Unknown',
+        string(fullStatus.managementState?.error),
+        sessionExpiresAt);
 
     return {
         connected: state === 'Connected',
@@ -43,7 +59,7 @@ export function normalizeStatus(data) {
         },
         networksRevision: number(fullStatus.networksRevision),
         peers: array(fullStatus.peers).map(normalizePeer),
-        sessionExpiresAt: timestampSeconds(data?.sessionExpiresAt),
+        sessionExpiresAt,
         state,
     };
 }
@@ -77,7 +93,9 @@ export function normalizeNetwork(network) {
         .flatMap(value => array(value?.ips))
         .map(string)
         .filter(Boolean);
-    const range = string(network?.range);
+    // Domain resources have no prefix; the daemon sends Go's zero-value text.
+    const rawRange = string(network?.range);
+    const range = rawRange === 'invalid Prefix' ? '' : rawRange;
 
     return {
         domains,

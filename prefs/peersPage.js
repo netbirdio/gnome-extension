@@ -1,13 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import Adw from 'gi://Adw?version=1';
+import Gdk from 'gi://Gdk?version=4.0';
 import Gtk from 'gi://Gtk?version=4.0';
 
 const FILTER_ALL = 0;
 const FILTER_CONNECTED = 1;
 const FILTER_OFFLINE = 2;
 
+// Matches the official NetBird client, which pulses peers that are still
+// connecting between full and half opacity.
+const PEER_STATUS_CSS = `
+image.netbird-peer-connecting {
+    animation: netbird-peer-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes netbird-peer-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+`;
+
+let peerStatusCssInstalled = false;
+
 export function createPeersPage() {
+    installPeerStatusCss();
+
     const root = new Gtk.Box({
         orientation: Gtk.Orientation.VERTICAL,
     });
@@ -60,6 +78,7 @@ export function createPeersPage() {
     root.append(overlay);
 
     const entries = new Map();
+    let connected = true;
     let currentPeers = [];
     let rowOrder = [];
 
@@ -86,10 +105,16 @@ export function createPeersPage() {
         }
         scrolled.visible = visible > 0;
         empty.visible = visible === 0;
-        empty.title = currentPeers.length === 0 ? 'No Peers' : 'No Matching Peers';
-        empty.description = currentPeers.length === 0
-            ? 'Connected peers will appear here'
-            : 'Try changing the search or connection filter';
+        if (!connected) {
+            empty.title = 'Not Connected';
+            empty.description = 'Connect to NetBird to see your peers';
+        } else if (currentPeers.length === 0) {
+            empty.title = 'No Peers';
+            empty.description = 'Connected peers will appear here';
+        } else {
+            empty.title = 'No Matching Peers';
+            empty.description = 'Try changing the search or connection filter';
+        }
     }
 
     search.connect('search-changed', updateFilter);
@@ -101,6 +126,7 @@ export function createPeersPage() {
             search.grab_focus();
         },
         update({snapshot}) {
+            connected = snapshot.connected;
             currentPeers = snapshot.peers;
             const currentKeys = new Set();
             for (const [index, peer] of snapshot.peers.entries()) {
@@ -137,6 +163,18 @@ export function createPeersPage() {
     };
 }
 
+function installPeerStatusCss() {
+    const display = Gdk.Display.get_default();
+    if (peerStatusCssInstalled || !display)
+        return;
+
+    const provider = new Gtk.CssProvider();
+    provider.load_from_string(PEER_STATUS_CSS);
+    Gtk.StyleContext.add_provider_for_display(
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+    peerStatusCssInstalled = true;
+}
+
 function sameOrder(left, right) {
     return left.length === right.length &&
         left.every((value, index) => value === right[index]);
@@ -159,16 +197,23 @@ function createPeerRow() {
 }
 
 function updatePeerRow(entry, peer) {
+    const connected = peer.state === 'Connected';
     entry.row.title = peerName(peer);
     entry.row.subtitle = [
         peer.ip,
         peer.ipv6,
-        peer.relayed ? `${peer.state} · Relayed` : peer.state,
+        peer.relayed ? 'Relayed' : '',
     ].filter(Boolean).join('  •  ');
-    entry.icon.icon_name = peer.state === 'Connected'
+    entry.icon.icon_name = connected
         ? 'network-transmit-receive-symbolic'
         : 'network-offline-symbolic';
-    entry.latency.label = peer.state === 'Connected' && peer.latencyMs > 0
+    entry.icon.css_classes = [
+        connected ? 'success' : 'warning',
+        ...peer.state === 'Connecting' ? ['netbird-peer-connecting'] : [],
+    ];
+    entry.icon.tooltip_text = peer.state;
+    entry.icon.update_property([Gtk.AccessibleProperty.LABEL], [peer.state]);
+    entry.latency.label = connected && peer.latencyMs > 0
         ? `${Math.round(peer.latencyMs)} ms`
         : '';
     entry.latency.visible = Boolean(entry.latency.label);

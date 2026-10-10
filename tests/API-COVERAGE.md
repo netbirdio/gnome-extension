@@ -16,9 +16,9 @@ gjs -m tests/settings-controller.test.js
 gjs -m tests/status-controller.test.js
 ```
 
-This currently runs 99 isolated cases: 87 transport, contract, and model cases,
-10 Settings-controller readback, policy, recovery, and lifecycle cases, and two
-Shell-controller policy cases. On an enrolled test guest, run the basic
+This currently runs 112 isolated cases: 93 transport, contract, and model cases,
+11 Settings-controller readback, policy, recovery, and lifecycle cases, and eight
+Shell-controller policy, profile, and session cases. On an enrolled test guest, run the basic
 reversible production-daemon checks with:
 
 ```sh
@@ -65,6 +65,38 @@ are restored.
 | `GetFeatures` | Every daemon policy flag and protobuf truth-value normalization |
 | `DebugBundle` | Defaults, every exposed option, result fields, cancellable, and close-delimited response |
 | `TriggerUpdate` | Success, daemon refusal/error text, and cancellable |
+
+## Live NetBird 0.80.0 results
+
+Run on 2026-10-09 against a self-hosted NetBird 0.80.0 network (combined
+server with the embedded IdP, an exit node, and a network with subnet and
+domain resources), from a Fedora 44 / GNOME 50.5 guest:
+
+- `live-api.test.js` with mutations: 11/11 pass.
+- `live-features.test.js` full matrix: 47/47 pass. Quantum resistance
+  (`rosenpassEnabled`) and its permissive mode are checked separately.
+- `SetConfig.lazyConnectionEnabled` returns success without being applied:
+  since 0.77 the client decides lazy mode from `NB_LAZY_CONN`/MDM and the
+  management account settings, not from the profile config. The extension no
+  longer offers the setting, and the matrix no longer checks it.
+- `DebugBundle` uploads only to NetBird's default upload service without
+  privileges; it returns `uploadedKey`, or `uploadFailureReason` with the local
+  `path` still set.
+- `RequestExtendAuthSession` and `WaitExtendAuthSession` renew an SSO session in
+  the browser while the tunnel stays up; `Status.sessionExpiresAt` carries the
+  deadline while connected and is cleared once the session has expired.
+- Interactive SSO uses the browser (PKCE) flow, whose `Login` response has no
+  user code; `WaitSSOLogin` must be called with an empty `userCode`, which also
+  starts the daemon's `localhost:53000` redirect listener.
+- `ListNetworks` returns HTTP 500 `not connected` whenever the engine is not
+  running (Idle, NeedsLogin), so callers must not treat it as a daemon failure.
+- An expired peer login is reported as `NeedsLogin`, not `SessionExpired`,
+  unless the client waited on a synchronous `Up` (and then only once). The
+  extension treats `NeedsLogin` as expired when the management error says the
+  login expired or the session deadline has passed.
+- The PKCE redirect listener fails the whole sign-in on the first request with
+  a mismatched `state`, so a browser reloading an old `localhost:53000` URL
+  breaks a new sign-in (seen with Firefox session restore).
 
 ## Live NetBird 0.77.0 results
 

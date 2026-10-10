@@ -39,10 +39,12 @@ const {
     removeProfile,
     renameProfile,
     requestDaemonUpdate,
+    requestExtendAuthSession,
     selectNetworks,
     setNetBirdConfig,
     subscribeNetBirdStatus,
     switchProfile,
+    waitExtendAuthSession,
     waitForSsoLogin,
 } = await import('../netbird/client.js');
 
@@ -123,6 +125,60 @@ const tests = [
         if (result.data.path !== '/tmp/netbird-debug.zip' ||
             result.data.uploadedKey !== 'case-42')
             throw new Error('expected DebugBundle response fields');
+    }],
+    ['createDebugBundle uploads only to NetBird and returns the key', async () => {
+        const result = await withContract({
+            method: 'DebugBundle',
+            request: {
+                anonymize: true,
+                systemInfo: true,
+                uploadURL: 'https://upload.debug.netbird.io/upload-url',
+            },
+            response: {path: '/tmp/netbird-debug.zip', uploadedKey: 'case-43'},
+        }, () => createDebugBundle({
+            anonymize: true,
+            timeoutMs: TEST_TIMEOUT_MS,
+            upload: true,
+        }));
+        if (result.uploadedKey !== 'case-43' || result.path !== '/tmp/netbird-debug.zip' ||
+            result.uploadFailureReason !== '')
+            throw new Error('expected the upload key and local path');
+    }],
+    ['createDebugBundle reports a failed upload with the local path', async () => {
+        const result = await withContract({
+            method: 'DebugBundle',
+            request: {
+                anonymize: false,
+                systemInfo: true,
+                uploadURL: 'https://upload.debug.netbird.io/upload-url',
+            },
+            response: {path: '/tmp/netbird-debug.zip', uploadFailureReason: 'offline'},
+        }, () => createDebugBundle({timeoutMs: TEST_TIMEOUT_MS, upload: true}));
+        if (result.uploadFailureReason !== 'offline' || result.uploadedKey !== '' ||
+            result.path !== '/tmp/netbird-debug.zip')
+            throw new Error('expected the failure reason and local path');
+    }],
+    ['requestExtendAuthSession starts a browser flow', async () => {
+        const flow = await withContract({
+            method: 'RequestExtendAuthSession',
+            request: {hasGraphicalSession: true},
+            response: {
+                deviceCode: 'device-1',
+                verificationURIComplete: 'https://login.example/auth?x=1',
+            },
+        }, () => requestExtendAuthSession({timeoutMs: TEST_TIMEOUT_MS}));
+        if (flow.deviceCode !== 'device-1' || flow.userCode !== '' ||
+            flow.verificationUriComplete !== 'https://login.example/auth?x=1')
+            throw new Error('expected the extension flow fields');
+    }],
+    ['waitExtendAuthSession returns the new deadline', async () => {
+        const expiresAt = await withContract({
+            method: 'WaitExtendAuthSession',
+            request: {deviceCode: 'device-1', userCode: ''},
+            response: {sessionExpiresAt: '2030-01-02T03:04:05Z'},
+        }, () => waitExtendAuthSession('device-1', '', {timeoutMs: TEST_TIMEOUT_MS}));
+        if (expiresAt !== Date.UTC(2030, 0, 2, 3, 4, 5) / 1000)
+            throw new Error(`unexpected deadline ${expiresAt}`);
     }],
     ['requestDaemonUpdate', () => requestDaemonUpdate({timeoutMs: TEST_TIMEOUT_MS})],
     ['requestDaemonUpdate with cancellable', () =>
@@ -349,11 +405,44 @@ const tests = [
             id: '', isActive: true, name: '',
         }, 'profile normalization');
     }],
+    ['an expired login is reported as SessionExpired', () => {
+        const expired = normalizeStatus({
+            fullStatus: {
+                managementState: {
+                    error: 'rpc error: code = PermissionDenied desc = peer login has expired, ' +
+                        'please log in once more',
+                },
+            },
+            status: 'NeedsLogin',
+        });
+        const pastDeadline = normalizeStatus({
+            sessionExpiresAt: '2020-01-01T00:00:00Z',
+            status: 'NeedsLogin',
+        });
+        const neverSignedIn = normalizeStatus({
+            fullStatus: {
+                managementState: {
+                    error: 'rpc error: code = PermissionDenied desc = no peer auth method provided',
+                },
+            },
+            status: 'NeedsLogin',
+        });
+        if (expired.state !== 'SessionExpired' || pastDeadline.state !== 'SessionExpired' ||
+            neverSignedIn.state !== 'NeedsLogin')
+            throw new Error(`unexpected states ${expired.state} ${pastDeadline.state} ${neverSignedIn.state}`);
+    }],
     ['network model only detects exact default routes', () => {
         const notExit = normalizeNetwork({ID: 'partial', range: '10.0.0.0/8, ::/1'});
         const exit = normalizeNetwork({ID: 'exit', range: ' ::/0 '});
         if (notExit.isExitNode || !exit.isExitNode)
             throw new Error('default route detection was not exact');
+    }],
+    ['network model drops the daemon placeholder for domain resources', () => {
+        const domain = normalizeNetwork({
+            ID: 'Intranet', domains: ['intranet.example'], range: 'invalid Prefix',
+        });
+        if (domain.range !== '' || domain.domains.join() !== 'intranet.example')
+            throw new Error(`domain resource range was ${JSON.stringify(domain.range)}`);
     }],
     ['subscribeNetBirdStatus', () => new Promise((resolve, reject) => {
         const cancellable = new Gio.Cancellable();
@@ -575,8 +664,14 @@ const tests = [
         if (email !== 'person@example.net')
             throw new Error('expected WaitSSOLogin email');
     }],
-    ['waitForSsoLogin requires a user code', () =>
-        assertRejects(() => waitForSsoLogin('', {timeoutMs: TEST_TIMEOUT_MS}), 'user code')],
+    ['waitForSsoLogin waits for the browser flow without a user code', async () => {
+        const email = await waitForSsoLogin('', {
+            hostname: 'test-host',
+            timeoutMs: TEST_TIMEOUT_MS,
+        });
+        if (email !== 'person@example.net')
+            throw new Error('expected WaitSSOLogin email for the PKCE flow');
+    }],
     ['empty profile names are rejected', async () => {
         await assertRejects(() => addProfile(''), 'profile name');
         await assertRejects(() => removeProfile('  '), 'profile name');
@@ -1311,9 +1406,10 @@ class FakeNetBirdJsonServer {
             });
             break;
         case 'WaitSSOLogin':
+            // Device-code flow sends the code; the browser (PKCE) flow sends ''.
             assertRequestBody(body, {
                 hostname: 'test-host',
-                userCode: 'ABCD-EFGH',
+                userCode: body.userCode === '' ? '' : 'ABCD-EFGH',
             });
             break;
         case 'SelectNetworks':

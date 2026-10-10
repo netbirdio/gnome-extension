@@ -30,11 +30,6 @@ const FIELDS = {
     interfaceName: {api: 'interfaceName', type: 'string'},
     interfacePort: {api: 'wireguardPort', managed: 'wireguardPort', type: 'number'},
     jwtCacheTtl: {api: 'sshJWTCacheTTL', type: 'number'},
-    lazyConnections: {
-        api: 'lazyConnectionEnabled',
-        managed: 'lazyConnection',
-        type: 'boolean',
-    },
     managementUrl: {api: 'managementUrl', managed: 'managementURL', type: 'string'},
     mtu: {api: 'mtu', type: 'number'},
     networkMonitor: {api: 'networkMonitor', type: 'boolean'},
@@ -45,9 +40,14 @@ const FIELDS = {
         read: 'preSharedKey',
         type: 'string',
     },
-    quantumResistance: {
+    quantumPermissive: {
         api: 'rosenpassPermissive',
         managed: 'rosenpassPermissive',
+        type: 'boolean',
+    },
+    quantumResistance: {
+        api: 'rosenpassEnabled',
+        managed: 'rosenpassEnabled',
         type: 'boolean',
     },
     sshLocalPortForwarding: {api: 'enableSSHLocalPortForwarding', type: 'boolean'},
@@ -66,11 +66,11 @@ const RECONNECT_FIELDS = new Set([
     'disableServerRoutes',
     'interfaceName',
     'interfacePort',
-    'lazyConnections',
     'managementUrl',
     'mtu',
     'networkMonitor',
     'preSharedKey',
+    'quantumPermissive',
     'quantumResistance',
 ]);
 
@@ -161,12 +161,16 @@ export class SettingsController {
         }
 
         const profileId = this._profileId;
+        // Permissive mode only applies with quantum resistance, as in NetBird's app.
+        const clearsPermissive = key === 'quantumResistance' && !value &&
+            this._values.get('quantumPermissive');
         this._setBusy(true);
         let writeSucceeded = false;
         try {
             const apiValue = field.inverted ? !value : value;
             await this._client.updateConfig({
                 [field.api]: apiValue,
+                ...clearsPermissive ? {[FIELDS.quantumPermissive.api]: false} : {},
                 profileName: profileId,
             });
             writeSucceeded = true;
@@ -192,6 +196,11 @@ export class SettingsController {
             this._values.set(key, applied);
             if (key === 'preSharedKey' && !this._client.cancelled)
                 this._onValueRestored(key, applied);
+            if (clearsPermissive && !this._client.cancelled) {
+                const permissive = readValues(result.config).get('quantumPermissive');
+                this._values.set('quantumPermissive', permissive);
+                this._onValueRestored('quantumPermissive', permissive);
+            }
         } catch (error) {
             if (this._client.cancelled)
                 return;
@@ -209,7 +218,9 @@ export class SettingsController {
                 const apiPrevious = field.inverted ? !previous : previous;
                 try {
                     await this._client.updateConfig({
-                        [field.api]: apiPrevious, profileName: profileId,
+                        [field.api]: apiPrevious,
+                        ...clearsPermissive ? {[FIELDS.quantumPermissive.api]: true} : {},
+                        profileName: profileId,
                     });
                 } catch (restoreError) {
                     rollbackError = restoreError;
@@ -282,11 +293,12 @@ export class SettingsController {
             });
     }
 
-    async createDebugBundle() {
+    async createDebugBundle(options = {}) {
         this._setBusy(true);
         try {
-            const result = await this._client.createDebugBundle();
-            return String(result.data.path ?? 'Debug bundle created');
+            const {path, uploadFailureReason, uploadedKey} =
+                await this._client.createDebugBundle(options);
+            return {path, uploadFailureReason, uploadedKey};
         } finally {
             this._setBusy(false);
         }

@@ -14,10 +14,13 @@ const STATE_ICON_FILES = {
 
 export class StatusIcons {
     constructor(extensionDirectory) {
-        const directory = extensionDirectory.get_child('icons')
+        const scalable = extensionDirectory.get_child('icons')
             .get_child('hicolor')
-            .get_child('scalable')
-            .get_child('status');
+            .get_child('scalable');
+        const directory = scalable.get_child('status');
+        this.appIcon = new Gio.FileIcon({
+            file: scalable.get_child('apps').get_child('netbird.svg'),
+        });
 
         this._icons = new Map();
         for (const filename of new Set(Object.values(STATE_ICON_FILES))) {

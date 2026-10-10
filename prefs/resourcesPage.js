@@ -65,6 +65,12 @@ export function createResourcesPage(actions) {
             list.invalidate_sort();
             scrolled.visible = resources.length > 0;
             empty.visible = resources.length === 0;
+            // NetBird only lists networks while connected.
+            const connected = state.snapshot?.connected ?? true;
+            empty.title = connected ? 'No Resources Available' : 'Not Connected';
+            empty.description = connected
+                ? 'You don’t have access to any network resources'
+                : 'Connect to NetBird to see network resources';
         },
     };
 }

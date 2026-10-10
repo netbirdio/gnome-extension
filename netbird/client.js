@@ -23,18 +23,31 @@ export {
     NetBirdDaemonError,
 } from './transport.js';
 
+// NetBird's own upload service; the daemon only allows other upload
+// servers for privileged callers.
+export const DEBUG_BUNDLE_UPLOAD_URL = 'https://upload.debug.netbird.io/upload-url';
+// Collecting logs and uploading (the daemon allows two minutes) can be slow.
+export const DEBUG_BUNDLE_TIMEOUT_MS = 180000;
+
 export async function createDebugBundle({
     anonymize = false,
     cancellable = null,
     systemInfo = true,
-    timeoutMs = DEFAULT_TIMEOUT_MS,
+    timeoutMs = DEBUG_BUNDLE_TIMEOUT_MS,
+    upload = false,
 } = {}) {
-    return callDaemon('DebugBundle', {
+    const result = await callDaemon('DebugBundle', {
         anonymize,
         systemInfo,
-        // Never upload; the bundle stays local.
-        uploadURL: '',
+        // Uploading is opt-in; otherwise the bundle stays local.
+        uploadURL: upload ? DEBUG_BUNDLE_UPLOAD_URL : '',
     }, {cancellable, timeoutMs});
+    return {
+        ...result,
+        path: String(result.data.path ?? ''),
+        uploadFailureReason: String(result.data.uploadFailureReason ?? ''),
+        uploadedKey: String(result.data.uploadedKey ?? ''),
+    };
 }
 
 export async function requestDaemonUpdate({
@@ -313,14 +326,43 @@ export async function waitForSsoLogin(userCode, {
     hostname = GLib.get_host_name(),
     timeoutMs = 300000,
 } = {}) {
-    if (!userCode)
-        throw new Error('A NetBird SSO user code is required');
-
+    // The browser (PKCE) flow has no user code; the daemon then expects an
+    // empty one and starts its localhost redirect listener for this call.
     const result = await callDaemon('WaitSSOLogin', {
         hostname,
-        userCode,
+        userCode: userCode ?? '',
     }, {cancellable, timeoutMs});
     return String(result.data.email ?? '');
+}
+
+// Renews an SSO session in the browser without disconnecting the tunnel.
+export async function requestExtendAuthSession({
+    cancellable = null,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+} = {}) {
+    const result = await callDaemon('RequestExtendAuthSession', {
+        hasGraphicalSession: true,
+    }, {cancellable, timeoutMs});
+    return {
+        deviceCode: String(result.data.deviceCode ?? ''),
+        userCode: String(result.data.userCode ?? ''),
+        verificationUri: String(result.data.verificationURI ?? ''),
+        verificationUriComplete: String(result.data.verificationURIComplete ?? ''),
+    };
+}
+
+// Waits for the browser step started by requestExtendAuthSession and returns
+// the new session deadline in seconds (0 if the peer cannot be extended).
+export async function waitExtendAuthSession(deviceCode, userCode, {
+    cancellable = null,
+    timeoutMs = 300000,
+} = {}) {
+    const result = await callDaemon('WaitExtendAuthSession', {
+        deviceCode,
+        userCode,
+    }, {cancellable, timeoutMs});
+    const expiresAt = Date.parse(String(result.data.sessionExpiresAt ?? ''));
+    return Number.isFinite(expiresAt) ? Math.floor(expiresAt / 1000) : 0;
 }
 
 export function isNetBirdVersionSupported(version) {
@@ -512,11 +554,23 @@ export class NetBirdClient {
     }
 
     createDebugBundle(options = {}) {
-        return createDebugBundle({...options, ...this._commandOptions()});
+        return createDebugBundle({
+            ...options,
+            cancellable: this._cancellable,
+            timeoutMs: DEBUG_BUNDLE_TIMEOUT_MS,
+        });
     }
 
     triggerUpdate() {
         return requestDaemonUpdate(this._commandOptions());
+    }
+
+    requestExtendSession() {
+        return requestExtendAuthSession(this._commandOptions());
+    }
+
+    waitExtendSession(deviceCode, userCode) {
+        return waitExtendAuthSession(deviceCode, userCode, {cancellable: this._cancellable});
     }
 
     _queryOptions() {

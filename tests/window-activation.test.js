@@ -34,6 +34,16 @@ const tests = [
         if (!found || events.join(',') !== 'unminimize,activate')
             throw new Error('the minimized window was not restored first');
     }],
+    ['ignores a NetBird window that belongs to another app', () => {
+        let activated = false;
+        const found = activateExistingPreferences([
+            fakeWindow('NetBird', false, 'io.netbird.client'),
+        ], () => {
+            activated = true;
+        });
+        if (found || activated)
+            throw new Error('the official NetBird app window was activated');
+    }],
     ['recognizes the host window before its custom title is applied', () => {
         const window = fakeWindow('NetBird for GNOME');
         const found = activateExistingPreferences([window], () => {
@@ -43,12 +53,18 @@ const tests = [
     }],
 ];
 
-function fakeWindow(title, minimized = false) {
+function fakeWindow(title, minimized = false, appId = 'org.gnome.Shell.Extensions') {
     return {
         minimized,
         unminimizeCalls: 0,
+        get_gtk_application_id() {
+            return appId;
+        },
         get_title() {
             return title;
+        },
+        get_wm_class() {
+            return appId;
         },
         unminimize() {
             this.unminimizeCalls++;

@@ -5,10 +5,15 @@ import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk?version=4.0';
 
 import {createHomePage} from './homePage.js';
+import {createCommandView} from './commandView.js';
 import {MainController} from './mainController.js';
 import {createPeersPage} from './peersPage.js';
 import {createResourcesPage} from './resourcesPage.js';
 import {presentSettingsWindow} from './settingsWindow.js';
+import {
+    createCheckedStringFactory,
+    createEllipsizedStringFactory,
+} from './stringFactory.js';
 
 const ENABLE_SOCKET_COMMAND =
     'sudo netbird service reconfigure --enable-json-socket';
@@ -30,6 +35,8 @@ export function populateMainWindow(window) {
     const toolbar = new Adw.ToolbarView();
     const header = new Adw.HeaderBar();
     const profileDropDown = new Gtk.DropDown({
+        factory: createEllipsizedStringFactory(16),
+        list_factory: createCheckedStringFactory(),
         model: Gtk.StringList.new([]),
         tooltip_text: 'Active NetBird profile',
     });
@@ -88,6 +95,7 @@ export function populateMainWindow(window) {
     window.set_content(toastOverlay);
 
     let profileIds = [];
+    let profileNames = [];
     let settingsWindow = null;
     let suppressProfile = false;
     const actionGroup = new Gio.SimpleActionGroup();
@@ -123,8 +131,12 @@ export function populateMainWindow(window) {
 
             suppressProfile = true;
             profileIds = state.profiles.map(profile => profile.id);
-            profileDropDown.model = Gtk.StringList.new(
-                state.profiles.map(profile => profile.name));
+            const nextProfileNames = state.profiles.map(profile => profile.name);
+            // Swapping the model while the popup activates a row crashes GTK.
+            if (!sameStrings(profileNames, nextProfileNames)) {
+                profileNames = nextProfileNames;
+                profileDropDown.model = Gtk.StringList.new(profileNames);
+            }
             const selected = state.profiles.findIndex(profile => profile.isActive);
             profileDropDown.selected = Math.max(0, selected);
             suppressProfile = false;
@@ -186,6 +198,11 @@ export function populateMainWindow(window) {
     };
 }
 
+function sameStrings(left, right) {
+    return left.length === right.length &&
+        left.every((value, index) => value === right[index]);
+}
+
 function headerActionButton(iconName, label, actionName) {
     const button = new Gtk.Button({
         action_name: actionName,
@@ -216,18 +233,12 @@ function addCallbackShortcut(controller, trigger, callback) {
 }
 
 function showSocketHelp(parent) {
-    const label = new Gtk.Label({
-        css_classes: ['monospace'],
-        label: ENABLE_SOCKET_COMMAND,
-        selectable: true,
-        wrap: true,
-    });
     const dialog = new Adw.AlertDialog({
         body: 'NetBird needs one local setting before this extension can connect. ' +
             'Run the command below in Terminal, then reopen NetBird. Your connection ' +
             'may pause briefly while the service restarts.',
         close_response: 'close',
-        extra_child: label,
+        extra_child: createCommandView(ENABLE_SOCKET_COMMAND),
         heading: '<b>Finish Setting Up NetBird</b>',
         heading_use_markup: true,
     });
@@ -241,14 +252,8 @@ function showError(parent, heading, error) {
         close_response: 'close',
         heading,
     });
-    if (error?.privilegeRequired && /^(sudo )?netbird /.test(error.privilegeCommand)) {
-        dialog.extra_child = new Gtk.Label({
-            css_classes: ['monospace'],
-            label: error.privilegeCommand,
-            selectable: true,
-            wrap: true,
-        });
-    }
+    if (error?.privilegeRequired && /^(sudo )?netbird /.test(error.privilegeCommand))
+        dialog.extra_child = createCommandView(error.privilegeCommand);
     dialog.add_response('close', 'Close');
     dialog.present(parent);
 }

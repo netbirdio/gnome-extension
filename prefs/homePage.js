@@ -5,6 +5,11 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 
+import {
+    createCheckedStringFactory,
+    createEllipsizedStringFactory,
+} from './stringFactory.js';
+
 export function createHomePage(actions) {
     const root = new Gtk.Box({
         orientation: Gtk.Orientation.VERTICAL,
@@ -21,17 +26,19 @@ export function createHomePage(actions) {
         hscrollbar_policy: Gtk.PolicyType.NEVER,
         vexpand: true,
     });
-    const content = new Gtk.Box({
-        halign: Gtk.Align.CENTER,
+    const clamp = new Adw.Clamp({
         margin_bottom: 24,
         margin_end: 24,
         margin_start: 24,
-        margin_top: 48,
+        margin_top: 24,
+        maximum_size: 480,
+        valign: Gtk.Align.CENTER,
+    });
+    const content = new Gtk.Box({
         orientation: Gtk.Orientation.VERTICAL,
         spacing: 14,
-        valign: Gtk.Align.CENTER,
-        width_request: 480,
     });
+    clamp.set_child(content);
 
     const brand = new Gtk.Box({
         halign: Gtk.Align.CENTER,
@@ -70,23 +77,25 @@ export function createHomePage(actions) {
     content.append(statusLabel);
 
     const fqdnLabel = detailLabel();
-    const ipLabel = detailLabel();
+    const ipv4Label = detailLabel();
+    const ipv6Label = detailLabel();
     content.append(fqdnLabel);
-    content.append(ipLabel);
+    content.append(ipv4Label);
+    content.append(ipv6Label);
 
     const exitGroup = new Adw.PreferencesGroup({
         margin_top: 28,
     });
     const exitNode = new Adw.ComboRow({
         factory: createEllipsizedStringFactory(24, true),
-        list_factory: createEllipsizedStringFactory(30),
+        list_factory: createCheckedStringFactory(),
         subtitle: 'Route traffic through another NetBird peer',
         title: 'Exit Node',
     });
     exitGroup.add(exitNode);
     content.append(exitGroup);
 
-    scrolled.set_child(content);
+    scrolled.set_child(clamp);
     root.append(scrolled);
 
     let suppressConnection = false;
@@ -132,12 +141,9 @@ export function createHomePage(actions) {
             connectionSwitch.sensitive = !busy && snapshot.state !== 'Unavailable';
 
             statusLabel.label = statusText(snapshot.state);
-            fqdnLabel.label = snapshot.connected ? snapshot.localPeer.fqdn : '';
-            fqdnLabel.visible = Boolean(fqdnLabel.label);
-            ipLabel.label = snapshot.connected
-                ? [snapshot.localPeer.ipv4, snapshot.localPeer.ipv6].filter(Boolean).join('  •  ')
-                : '';
-            ipLabel.visible = Boolean(ipLabel.label);
+            setDetail(fqdnLabel, snapshot.connected ? snapshot.localPeer.fqdn : '');
+            setDetail(ipv4Label, snapshot.connected ? snapshot.localPeer.ipv4 : '');
+            setDetail(ipv6Label, snapshot.connected ? snapshot.localPeer.ipv6 : '');
 
             const exits = networks.filter(network => network.isExitNode);
             exitGroup.visible = !features.disableNetworks;
@@ -157,25 +163,6 @@ export function createHomePage(actions) {
     };
 }
 
-function createEllipsizedStringFactory(widthChars, alignEnd = false) {
-    const factory = new Gtk.SignalListItemFactory();
-    factory.connect('setup', (_factory, listItem) => {
-        listItem.child = new Gtk.Label({
-            ellipsize: Pango.EllipsizeMode.END,
-            halign: alignEnd ? Gtk.Align.END : Gtk.Align.FILL,
-            max_width_chars: widthChars,
-            width_chars: widthChars,
-            xalign: alignEnd ? 1 : 0,
-        });
-    });
-    factory.connect('bind', (_factory, listItem) => {
-        const text = listItem.item?.string ?? '';
-        listItem.child.label = text;
-        listItem.child.tooltip_text = text;
-    });
-    return factory;
-}
-
 function sameStrings(left, right) {
     return left.length === right.length &&
         left.every((value, index) => value === right[index]);
@@ -184,9 +171,16 @@ function sameStrings(left, right) {
 function detailLabel() {
     return new Gtk.Label({
         css_classes: ['dim-label', 'monospace'],
+        ellipsize: Pango.EllipsizeMode.END,
         selectable: false,
         visible: false,
     });
+}
+
+function setDetail(label, text) {
+    label.label = text;
+    label.tooltip_text = text;
+    label.visible = Boolean(text);
 }
 
 function statusText(state) {

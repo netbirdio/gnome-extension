@@ -3,14 +3,16 @@
 import Adw from 'gi://Adw?version=1';
 import Gtk from 'gi://Gtk?version=4.0';
 
+import {createCommandView} from './commandView.js';
+import {presentDebugBundleDialog} from './debugBundleDialog.js';
 import {MASKED_PRESHARED_KEY, SettingsController} from './settingsController.js';
 
 const GENERAL_RESTRICTED_KEYS = new Set([
     'allowSsh',
     'blockInbound',
     'connectOnStartup',
-    'lazyConnections',
     'notifications',
+    'quantumPermissive',
     'quantumResistance',
 ]);
 
@@ -38,26 +40,26 @@ export function presentSettingsWindow(parent) {
         switchRow('connectOnStartup', 'Connect on Startup',
             'Start NetBird automatically when you sign in'),
         switchRow('quantumResistance', 'Enable Quantum Resistance',
-            'Enable Rosenpass permissive mode'),
-        switchRow('lazyConnections', 'Enable Lazy Connections',
-            'Only establish peer connections when needed'),
+            'Add a post-quantum key exchange via Rosenpass on top of WireGuard'),
+        switchRow('quantumPermissive', 'Enable Permissive Mode',
+            'Allow connections to peers without quantum resistance support'),
         switchRow('blockInbound', 'Block Inbound Connections',
             'Block inbound peer connections'),
         switchRow('notifications', 'Notifications',
             'Show NetBird desktop notifications'),
     ]));
     const debugBundleRow = buttonRow('Create Debug Bundle',
-        'Save a diagnostic archive using the NetBird daemon',
-        'document-save-symbolic', async () => {
-            try {
-                const path = await controller.createDebugBundle();
-                if (!controller.cancelled)
-                    window.add_toast(new Adw.Toast({title: path}));
-            } catch (error) {
+        'Collect diagnostics for a bug report',
+        'document-save-symbolic', () => presentDebugBundleDialog(window, {
+            createBundle: async options => {
+                const result = await controller.createDebugBundle(options);
+                return controller.cancelled ? null : result;
+            },
+            onError: error => {
                 if (!controller.cancelled)
                     showError(window, 'Debug Bundle Could Not Be Created', error);
-            }
-        });
+            },
+        }));
     const updateRow = buttonRow('Check for NetBird Update',
         'Ask the NetBird daemon to start its updater',
         'software-update-available-symbolic', async () => {
@@ -153,6 +155,14 @@ export function presentSettingsWindow(parent) {
             'Seconds to cache SSH identity tokens'),
     ]));
 
+    const quantumRow = rows.get('quantumResistance');
+    const permissiveRow = rows.get('quantumPermissive');
+    let permissiveManaged = false;
+    const syncPermissiveRow = () => {
+        permissiveRow.sensitive = !permissiveManaged && quantumRow.active;
+    };
+    quantumRow.connect('notify::active', syncPermissiveRow);
+
     controller = new SettingsController({
         onBusyChanged(busy) {
             for (const preferencePage of pages)
@@ -180,12 +190,18 @@ export function presentSettingsWindow(parent) {
                 (preferencePage !== network ||
                     (!updatesDisabled && !state.features.disableNetworks)) &&
                 (preferencePage !== ssh || !updatesDisabled || showManagedSsh));
-            for (const preferencePage of addedPages)
-                window.remove(preferencePage);
-            addedPages.clear();
-            for (const preferencePage of enabledPages) {
-                window.add(preferencePage);
-                addedPages.add(preferencePage);
+            // Rebuilding pages resets the visible page, so only do it when they change.
+            if (!sameItems([...addedPages], enabledPages)) {
+                const visiblePage = window.visible_page;
+                for (const preferencePage of addedPages)
+                    window.remove(preferencePage);
+                addedPages.clear();
+                for (const preferencePage of enabledPages) {
+                    window.add(preferencePage);
+                    addedPages.add(preferencePage);
+                }
+                if (addedPages.has(visiblePage))
+                    window.visible_page = visiblePage;
             }
             for (const [key, value] of state.values) {
                 const row = rows.get(key);
@@ -201,6 +217,8 @@ export function presentSettingsWindow(parent) {
                         (key === 'allowSsh' && managed);
                 }
             }
+            permissiveManaged = managedKeys.has('quantumPermissive');
+            syncPermissiveRow();
             suppress = false;
         },
         onValueRestored(key, value) {
@@ -302,6 +320,11 @@ export function presentSettingsWindow(parent) {
     }
 }
 
+function sameItems(left, right) {
+    return left.length === right.length &&
+        left.every((value, index) => value === right[index]);
+}
+
 function setRowValue(row, value) {
     if (row instanceof Adw.SwitchRow)
         row.active = Boolean(value);
@@ -337,6 +360,7 @@ function promptForName(parent, heading, responseLabel, initialText, callback) {
         close_response: 'cancel',
         default_response: 'accept',
         extra_child: entry,
+        focus_widget: entry,
         heading,
     });
     dialog.add_response('cancel', 'Cancel');
@@ -378,14 +402,8 @@ function showError(parent, heading, error) {
         close_response: 'close',
         heading,
     });
-    if (error?.privilegeRequired && /^(sudo )?netbird /.test(error.privilegeCommand)) {
-        dialog.extra_child = new Gtk.Label({
-            css_classes: ['monospace'],
-            label: error.privilegeCommand,
-            selectable: true,
-            wrap: true,
-        });
-    }
+    if (error?.privilegeRequired && /^(sudo )?netbird /.test(error.privilegeCommand))
+        dialog.extra_child = createCommandView(error.privilegeCommand);
     dialog.add_response('close', 'Close');
     dialog.present(parent);
 }

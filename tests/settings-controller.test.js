@@ -34,11 +34,11 @@ const tests = [
             throw new Error('reconnect setting was not persisted');
     }],
     ['silently ignored daemon write restores the row', async () => {
-        const fixture = createFixture({ignoredField: 'lazyConnectionEnabled'});
+        const fixture = createFixture({ignoredField: 'blockInbound'});
         await fixture.controller.load();
-        await fixture.controller.setValue('lazyConnections', true);
+        await fixture.controller.setValue('blockInbound', true);
         if (fixture.restored.length !== 1 ||
-            fixture.restored[0].key !== 'lazyConnections' ||
+            fixture.restored[0].key !== 'blockInbound' ||
             fixture.restored[0].value !== false)
             throw new Error('ignored write did not restore its old value');
 
@@ -47,13 +47,30 @@ const tests = [
             throw new Error('ignored write did not report a useful error');
 
         assertCalls(fixture.client, [
-            'update:lazyConnectionEnabled',
+            'update:blockInbound',
             'status',
             'disconnect',
             'connect:default',
             'config',
-            'update:lazyConnectionEnabled',
+            'update:blockInbound',
+            // Readback that verifies the rollback actually restored the value.
+            'config',
         ]);
+    }],
+    ['turning off quantum resistance also turns off permissive mode', async () => {
+        const fixture = createFixture();
+        fixture.client.configData.rosenpassEnabled = true;
+        fixture.client.configData.rosenpassPermissive = true;
+        await fixture.controller.load();
+        await fixture.controller.setValue('quantumResistance', false);
+        if (fixture.errors.length)
+            throw new Error(`unexpected error: ${fixture.errors[0].error}`);
+        if (fixture.client.configData.rosenpassEnabled ||
+            fixture.client.configData.rosenpassPermissive)
+            throw new Error('quantum resistance or permissive mode stayed on');
+        if (!fixture.restored.some(({key, value}) =>
+            key === 'quantumPermissive' && value === false))
+            throw new Error('the permissive row was not updated');
     }],
     ['failed daemon write restores the row without reconnecting', async () => {
         const fixture = createFixture({failedField: 'disableNotifications'});
@@ -152,7 +169,6 @@ class FakeClient {
             disableAutoConnect: true,
             disableNotifications: true,
             interfaceName: 'wt0',
-            lazyConnectionEnabled: false,
             preSharedKey: '',
             wireguardPort: '51820',
         };
@@ -189,11 +205,13 @@ class FakeClient {
         this.calls.push(`update:${field}`);
         if (field === this.failedField)
             throw new Error('daemon rejected the setting');
-        if (field !== this.ignoredField) {
-            const value = this.stringifyNumbers && typeof changes[field] === 'number'
-                ? String(changes[field])
-                : changes[field];
-            const readField = field === 'optionalPreSharedKey' ? 'preSharedKey' : field;
+        for (const [key, change] of Object.entries(changes)) {
+            if (key === 'profileName' || key === this.ignoredField)
+                continue;
+            const value = this.stringifyNumbers && typeof change === 'number'
+                ? String(change)
+                : change;
+            const readField = key === 'optionalPreSharedKey' ? 'preSharedKey' : key;
             this.configData[readField] = value;
         }
         return {data: {}};

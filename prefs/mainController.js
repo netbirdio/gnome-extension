@@ -26,7 +26,7 @@ export class MainController {
         this._profiles = [];
         this._reconnectAttempt = 0;
         this._reconnectSourceId = 0;
-        this._refreshing = false;
+        this._refreshPromise = null;
         this._snapshot = unavailableSnapshot();
 
         this._subscribe();
@@ -52,16 +52,25 @@ export class MainController {
         this._client.destroy();
     }
 
-    async refresh() {
-        if (this._client.cancelled || this._refreshing)
-            return;
+    refresh() {
+        if (this._client.cancelled)
+            return Promise.resolve();
 
-        this._refreshing = true;
+        // Callers that need fresh data (such as connect) share one request.
+        this._refreshPromise ??= this._refresh().finally(() => {
+            this._refreshPromise = null;
+        });
+        return this._refreshPromise;
+    }
+
+    async _refresh() {
         try {
             const [status, profiles, networks, features] = await Promise.all([
                 this._client.status(),
                 this._client.profiles(),
-                this._client.networks(),
+                // The daemon only lists networks while connected ("not connected"
+                // otherwise); that must not mark the whole daemon unavailable.
+                this._client.networks().catch(() => ({networks: []})),
                 this._client.features(),
             ]);
             if (this._client.cancelled)
@@ -76,8 +85,6 @@ export class MainController {
         } catch {
             if (!this._client.cancelled)
                 this._setUnavailable();
-        } finally {
-            this._refreshing = false;
         }
     }
 
@@ -92,7 +99,7 @@ export class MainController {
             else if (LOGIN_STATES.includes(this._snapshot.state))
                 await this._login();
             else
-                await this._client.connect(this._activeProfileId());
+                await this._client.connect(await this._currentProfileId());
         } catch (error) {
             if (!this._client.cancelled)
                 this._onError('Connection Could Not Be Changed', error);
@@ -108,16 +115,24 @@ export class MainController {
 
         this._setBusy(true);
         const reconnect = this._snapshot.connected || this._snapshot.state === 'Connecting';
+        const previousProfileId = this._activeProfileId();
+        let switched = false;
         try {
             if (reconnect)
                 await this._client.disconnect();
             await this._client.switchProfile(profileId);
+            switched = true;
             if (reconnect)
                 await this._client.connect(profileId);
             await this.refresh();
         } catch (error) {
-            if (!this._client.cancelled)
-                this._onError('Profile Could Not Be Switched', error);
+            if (this._client.cancelled)
+                return;
+            this._onError('Profile Could Not Be Switched', profileError(error, profile));
+            // A failed switch must not leave the previous profile disconnected.
+            if (reconnect && !switched)
+                await this._client.connect(previousProfileId).catch(() => {});
+            await this.refresh();
         } finally {
             this._setBusy(false);
         }
@@ -178,7 +193,7 @@ export class MainController {
             await this._client.waitForSso(login.userCode);
         }
         if (!this._client.cancelled)
-            await this._client.connect(this._activeProfileId());
+            await this._client.connect(await this._currentProfileId());
     }
 
     _subscribe() {
@@ -192,10 +207,13 @@ export class MainController {
 
                 const networksChanged = snapshot.networksRevision !==
                     this._snapshot.networksRevision;
+                // Profile switches from Quick Settings or the CLI pass through
+                // a state change, so follow them here.
+                const stateChanged = snapshot.state !== this._snapshot.state;
                 this._snapshot = snapshot;
                 this._reconnectAttempt = 0;
                 this._emitChanged();
-                if (networksChanged)
+                if (networksChanged || stateChanged)
                     void this.refresh();
             },
             () => {
@@ -238,6 +256,12 @@ export class MainController {
         return this._profiles.find(profile => profile.isActive)?.id ?? '';
     }
 
+    async _currentProfileId() {
+        // Another window or the CLI may have switched profiles since the last refresh.
+        await this.refresh();
+        return this._activeProfileId();
+    }
+
     _emitChanged() {
         if (!this._client.cancelled)
             this._onStateChanged(this.state);
@@ -254,4 +278,10 @@ function unavailableSnapshot(previous = null) {
         sessionExpiresAt: previous?.sessionExpiresAt ?? 0,
         state: 'Unavailable',
     };
+}
+
+function profileError(error, profile) {
+    // The daemon reports profiles by internal ID; show the name people chose.
+    const message = String(error?.message ?? error).replaceAll(profile.id, profile.name);
+    return new Error(message, {cause: error});
 }
