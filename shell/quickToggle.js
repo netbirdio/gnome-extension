@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import GObject from 'gi://GObject';
+import St from 'gi://St';
 
 import {InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -8,6 +9,8 @@ import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {QuickMenuToggle} from 'resource:///org/gnome/shell/ui/quickSettings.js';
 
+import {OFFLINE_STATES, statusLabel} from '../netbird/controller.js';
+import {hostAddress} from '../netbird/normalize.js';
 import {NetBirdNotifier} from './notifications.js';
 import {StatusController} from './statusController.js';
 import {VpnButtonGuard} from './vpnButtonGuard.js';
@@ -39,11 +42,19 @@ export const NetBirdToggle = GObject.registerClass({
         this.menu.addMenuItem(this._profileSection);
         this.menu.addMenuItem(this._profileSeparator);
 
+        this._ipAddress = '';
+        this._copyIpItem = this.menu.addAction('Copy IP Address', () => {
+            St.Clipboard.get_default().set_text(
+                St.ClipboardType.CLIPBOARD, this._ipAddress);
+            this.menu.close();
+        }, 'edit-copy-symbolic');
+        this._copyIpItem.visible = false;
         this._refreshItem = this.menu.addAction('Refresh', () => {
-            void this._controller.refreshLists();
+            void this._controller.refresh();
         }, 'view-refresh-symbolic');
         this._openItem = this.menu.addAction('Open NetBird', () => {
-            this.menu.close();
+            // Like GNOME's own settings items, get Quick Settings out of the way.
+            Main.panel.closeQuickSettings();
             this._extension.openPreferences();
         }, 'network-vpn-symbolic');
         this._openItem.visible = Main.sessionMode.allowSettings;
@@ -70,7 +81,7 @@ export const NetBirdToggle = GObject.registerClass({
                 // Shell re-shows separators on open (this runs after its handler);
                 // with no profiles there is nothing to separate.
                 this._profileSeparator.visible = !this._profileSection.isEmpty();
-                void this._controller.refreshLists();
+                void this._controller.refresh();
             }),
         ]);
     }
@@ -108,16 +119,19 @@ export const NetBirdToggle = GObject.registerClass({
         const gicon = this._statusIcons.forState(snapshot.state);
         this.gicon = gicon;
         this._panelIcon.gicon = gicon;
-        this.menu.setHeader(
-            gicon, 'NetBird', statusLabel(snapshot.state, snapshot.localPeer.ipv4));
+        this._ipAddress = snapshot.connected ? hostAddress(snapshot.localPeer.ipv4) : '';
+        const subtitle = this._ipAddress || statusLabel(snapshot.state);
+        this.menu.setHeader(gicon, 'NetBird', subtitle);
         this.checked = snapshot.connected || snapshot.state === 'Connecting';
-        this.subtitle = statusLabel(snapshot.state, snapshot.localPeer.ipv4);
+        this.subtitle = subtitle;
         this._panelIcon.visible = true;
+        this._copyIpItem.visible = Boolean(this._ipAddress);
         this._rebuildProfiles(profiles);
         // Shell stops resyncing a section's items after the first one becomes
         // sensitive, so later profiles would stay grayed out.
+        const offline = OFFLINE_STATES.includes(snapshot.state);
         for (const item of this._profileItems)
-            item.setSensitive(!busy && snapshot.state !== 'Unavailable');
+            item.setSensitive(!busy && !offline);
         this._refreshItem.setSensitive(!busy);
     }
 
@@ -182,22 +196,6 @@ export const NetBirdToggle = GObject.registerClass({
         }
     }
 });
-
-function statusLabel(state, ip) {
-    if (state === 'Connected' && ip)
-        return ip;
-
-    const labels = {
-        Connected: 'Connected',
-        Connecting: 'Connecting…',
-        Idle: 'Disconnected',
-        LoginFailed: 'Sign-in failed',
-        NeedsLogin: 'Sign in required',
-        SessionExpired: 'Session expired',
-        Unavailable: 'Finish setup',
-    };
-    return labels[state] ?? state;
-}
 
 function formatDuration(deadline) {
     const minutes = Math.max(1, Math.round((deadline - Date.now() / 1000) / 60));

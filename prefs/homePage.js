@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import Adw from 'gi://Adw?version=1';
+import Gdk from 'gi://Gdk?version=4.0';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 
+import {versionErrorMessage} from '../netbird/client.js';
+import {OFFLINE_STATES, statusLabel} from '../netbird/controller.js';
+import {hostAddress} from '../netbird/normalize.js';
 import {
     createCheckedStringFactory,
     createEllipsizedStringFactory,
+    sameStrings,
 } from './stringFactory.js';
 
 export function createHomePage(actions) {
@@ -69,12 +75,12 @@ export function createHomePage(actions) {
         ['NetBird connection']);
     content.append(connectionSwitch);
 
-    const statusLabel = new Gtk.Label({
+    const stateLabel = new Gtk.Label({
         css_classes: ['title-2'],
         halign: Gtk.Align.CENTER,
         label: 'Loading…',
     });
-    content.append(statusLabel);
+    content.append(stateLabel);
 
     const fqdnLabel = detailLabel();
     const ipv4Label = detailLabel();
@@ -134,16 +140,18 @@ export function createHomePage(actions) {
     return {
         root,
         update({busy, features = {}, networks, snapshot}) {
-            banner.revealed = snapshot.state === 'Unavailable';
+            updateBanner(banner, snapshot);
             suppressConnection = true;
             connectionSwitch.active = snapshot.connected || snapshot.state === 'Connecting';
             suppressConnection = false;
-            connectionSwitch.sensitive = !busy && snapshot.state !== 'Unavailable';
+            connectionSwitch.sensitive = !busy && !OFFLINE_STATES.includes(snapshot.state);
 
-            statusLabel.label = statusText(snapshot.state);
+            stateLabel.label = statusLabel(snapshot.state);
             setDetail(fqdnLabel, snapshot.connected ? snapshot.localPeer.fqdn : '');
-            setDetail(ipv4Label, snapshot.connected ? snapshot.localPeer.ipv4 : '');
-            setDetail(ipv6Label, snapshot.connected ? snapshot.localPeer.ipv6 : '');
+            setDetail(ipv4Label,
+                snapshot.connected ? hostAddress(snapshot.localPeer.ipv4) : '');
+            setDetail(ipv6Label,
+                snapshot.connected ? hostAddress(snapshot.localPeer.ipv6) : '');
 
             const exits = networks.filter(network => network.isExitNode);
             exitGroup.visible = !features.disableNetworks;
@@ -163,35 +171,88 @@ export function createHomePage(actions) {
     };
 }
 
-function sameStrings(left, right) {
-    return left.length === right.length &&
-        left.every((value, index) => value === right[index]);
+// Setup and updates are both done outside the extension; only setup has
+// a command to show.
+function updateBanner(banner, snapshot) {
+    banner.revealed = OFFLINE_STATES.includes(snapshot.state);
+    if (snapshot.state === 'UpdateRequired') {
+        banner.title = versionErrorMessage(snapshot.daemonVersion);
+        banner.button_label = null;
+    } else {
+        banner.title = 'Finish setting up NetBird';
+        banner.button_label = 'Show Me How';
+    }
 }
 
+// Addresses are copied whole: a click selects all of it, the menu only offers
+// Copy, and Ctrl+C copies it. GTK's own label gestures would allow partial
+// selections and offer Cut, Paste, and Delete, which mean nothing here.
 function detailLabel() {
-    return new Gtk.Label({
+    const label = new Gtk.Label({
         css_classes: ['dim-label', 'monospace'],
         ellipsize: Pango.EllipsizeMode.END,
-        selectable: false,
+        selectable: true,
         visible: false,
     });
+
+    const actions = new Gio.SimpleActionGroup();
+    const copy = new Gio.SimpleAction({name: 'copy'});
+    copy.connect('activate', () => label.get_clipboard().set(label.label));
+    actions.add_action(copy);
+    label.insert_action_group('address', actions);
+
+    const menu = new Gio.Menu();
+    menu.append('Copy', 'address.copy');
+    const popover = Gtk.PopoverMenu.new_from_model(menu);
+    popover.has_arrow = false;
+    popover.set_parent(label);
+    label.connect('destroy', () => popover.unparent());
+
+    const selectAll = () => {
+        label.grab_focus();
+        label.select_region(0, -1);
+    };
+    const showMenu = (x, y) => {
+        selectAll();
+        popover.pointing_to = new Gdk.Rectangle({x, y, width: 1, height: 1});
+        popover.popup();
+    };
+
+    // The capture phase runs before the label's own gestures and stops them.
+    const click = new Gtk.GestureClick({
+        button: 0,
+        propagation_phase: Gtk.PropagationPhase.CAPTURE,
+    });
+    click.connect('pressed', (gesture, _presses, x, y) => {
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED);
+        if (gesture.get_current_button() === Gdk.BUTTON_SECONDARY)
+            showMenu(x, y);
+        else
+            selectAll();
+    });
+    label.add_controller(click);
+
+    const shortcuts = new Gtk.ShortcutController({
+        propagation_phase: Gtk.PropagationPhase.CAPTURE,
+    });
+    shortcuts.add_shortcut(new Gtk.Shortcut({
+        action: Gtk.NamedAction.new('address.copy'),
+        trigger: Gtk.ShortcutTrigger.parse_string('<Control>c|<Control>Insert'),
+    }));
+    shortcuts.add_shortcut(new Gtk.Shortcut({
+        action: Gtk.CallbackAction.new(() => {
+            showMenu(label.get_width() / 2, label.get_height() / 2);
+            return true;
+        }),
+        trigger: Gtk.ShortcutTrigger.parse_string('<Shift>F10|Menu'),
+    }));
+    label.add_controller(shortcuts);
+
+    return label;
 }
 
 function setDetail(label, text) {
     label.label = text;
     label.tooltip_text = text;
     label.visible = Boolean(text);
-}
-
-function statusText(state) {
-    const labels = {
-        Connected: 'Connected',
-        Connecting: 'Connecting…',
-        Idle: 'Disconnected',
-        LoginFailed: 'Sign-In Failed',
-        NeedsLogin: 'Sign In Required',
-        SessionExpired: 'Session Expired',
-        Unavailable: 'NetBird Needs Setup',
-    };
-    return labels[state] ?? 'Unknown Status';
 }

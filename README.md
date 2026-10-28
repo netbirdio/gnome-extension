@@ -49,6 +49,18 @@ connected status arrives. They remain disconnected until you enable them again.
 
 ## Development
 
+`make check` and `make package` need these tools on your `PATH`:
+
+| Tool | Used for | Fedora / Debian / Ubuntu package |
+| --- | --- | --- |
+| `make` | running the checks and packaging | `make` |
+| `gjs` | the test suites | `gjs` |
+| Node.js and `npm` | ESLint and module syntax checks | `nodejs`, `npm` |
+| `rg` (ripgrep) | process-boundary and forbidden-API checks | `ripgrep` |
+| `gnome-extensions` | building the ZIP | `gnome-shell` |
+
+`./install.sh` only needs `gnome-extensions`.
+
 Install the development-only linter once, then run the full local check:
 
 ```sh

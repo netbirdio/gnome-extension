@@ -18,8 +18,11 @@ function timestampSeconds(value) {
     if (!text)
         return 0;
 
+    // Go sends its zero time (year 1) for peers that never shook hands.
     const milliseconds = Date.parse(text);
-    return Number.isFinite(milliseconds) ? Math.floor(milliseconds / 1000) : 0;
+    return Number.isFinite(milliseconds) && milliseconds > 0
+        ? Math.floor(milliseconds / 1000)
+        : 0;
 }
 
 function durationMilliseconds(value) {
@@ -38,6 +41,12 @@ function sessionState(state, managementError, sessionExpiresAt) {
     if (sessionExpiresAt > 0 && sessionExpiresAt * 1000 <= Date.now())
         return 'SessionExpired';
     return state;
+}
+
+// The daemon reports the local address with its network prefix
+// (100.92.0.1/16); copying wants the address alone.
+export function hostAddress(value) {
+    return string(value).split('/')[0];
 }
 
 export function normalizeStatus(data) {

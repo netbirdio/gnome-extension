@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import {NetBirdVersionError} from '../netbird/client.js';
 import {StatusController} from '../shell/statusController.js';
 
 const tests = [
@@ -85,6 +86,26 @@ const tests = [
             throw new Error('a deliberate disconnect was reported as an expiry');
         fixture.controller.destroy();
     }],
+    ['an outdated daemon asks for an update instead of setup', async () => {
+        const fixture = await createFixture(false);
+        fixture.client.emitError(new NetBirdVersionError('0.75.1'));
+        const {snapshot: state} = fixture.state;
+        if (state.state !== 'UpdateRequired' || state.daemonVersion !== '0.75.1')
+            throw new Error(`expected UpdateRequired for 0.75.1, got ${state.state}`);
+        if (await fixture.controller.toggleConnection())
+            throw new Error('an outdated daemon was handled as a connection toggle');
+        if (fixture.client.connectCalls !== 0)
+            throw new Error('connection was attempted on an outdated daemon');
+        fixture.controller.destroy();
+    }],
+    ['a lost socket still asks for setup', async () => {
+        const fixture = await createFixture(false);
+        fixture.client.emitStatus(snapshot('Connected'));
+        fixture.client.emitError(new Error('Could not connect: No such file or directory'));
+        if (fixture.state.snapshot.state !== 'Unavailable')
+            throw new Error(`expected Unavailable, got ${fixture.state.snapshot.state}`);
+        fixture.controller.destroy();
+    }],
     ['connect uses the profile that is active now, not a cached one', async () => {
         const fixture = await createFixture(false);
         fixture.controller._snapshot = {...fixture.controller._snapshot, state: 'Idle'};
@@ -167,8 +188,9 @@ class FakeClient {
         });
     }
 
-    subscribeStatus(onStatus) {
+    subscribeStatus(onStatus, onError) {
         this.emitStatus = onStatus;
+        this.emitError = onError;
     }
 }
 

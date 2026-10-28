@@ -13,6 +13,7 @@ import {presentSettingsWindow} from './settingsWindow.js';
 import {
     createCheckedStringFactory,
     createEllipsizedStringFactory,
+    sameStrings,
 } from './stringFactory.js';
 
 const ENABLE_SOCKET_COMMAND =
@@ -196,11 +197,6 @@ export function populateMainWindow(window) {
         resourcesStackPage,
         stack,
     };
-}
-
-function sameStrings(left, right) {
-    return left.length === right.length &&
-        left.every((value, index) => value === right[index]);
 }
 
 function headerActionButton(iconName, label, actionName) {

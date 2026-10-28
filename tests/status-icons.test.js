@@ -13,6 +13,7 @@ const expectedFiles = {
     NeedsLogin: 'netbird-systemtray-needs-login-symbolic.svg',
     SessionExpired: 'netbird-systemtray-needs-login-symbolic.svg',
     Unavailable: 'netbird-systemtray-error-symbolic.svg',
+    UpdateRequired: 'netbird-systemtray-error-symbolic.svg',
 };
 
 const projectDirectory = Gio.File.new_for_path(GLib.get_current_dir());

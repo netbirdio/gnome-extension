@@ -17,17 +17,25 @@ export function createCommandView(command, {copyLabel = 'Copy command'} = {}) {
         selectable: true,
         xalign: 0,
     });
+
+    box.append(label);
+    box.append(createCopyButton(() => command, copyLabel));
+    return box;
+}
+
+// A flat copy button that briefly shows a check mark once it has copied.
+export function createCopyButton(getText, accessibleLabel) {
     const button = new Gtk.Button({
         css_classes: ['flat'],
         icon_name: 'edit-copy-symbolic',
         tooltip_text: 'Copy',
         valign: Gtk.Align.CENTER,
     });
-    button.update_property([Gtk.AccessibleProperty.LABEL], [copyLabel]);
+    button.update_property([Gtk.AccessibleProperty.LABEL], [accessibleLabel]);
 
     let resetId = 0;
     button.connect('clicked', () => {
-        button.get_clipboard().set(command);
+        button.get_clipboard().set(getText());
         button.icon_name = 'object-select-symbolic';
         button.tooltip_text = 'Copied';
         if (resetId)
@@ -44,10 +52,7 @@ export function createCommandView(command, {copyLabel = 'Copy command'} = {}) {
             GLib.Source.remove(resetId);
         resetId = 0;
     });
-
-    box.append(label);
-    box.append(button);
-    return box;
+    return button;
 }
 
 export function formatCommand(command) {

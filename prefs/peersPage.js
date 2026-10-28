@@ -2,7 +2,12 @@
 
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
+
+import {hostAddress} from '../netbird/normalize.js';
+import {createCopyButton} from './commandView.js';
+import {sameStrings} from './stringFactory.js';
 
 const FILTER_ALL = 0;
 const FILTER_CONNECTED = 1;
@@ -16,8 +21,9 @@ image.netbird-peer-connecting {
 }
 
 @keyframes netbird-peer-pulse {
-    0%, 100% { opacity: 1; }
+    0% { opacity: 1; }
     50% { opacity: 0.5; }
+    100% { opacity: 1; }
 }
 `;
 
@@ -151,7 +157,7 @@ export function createPeersPage() {
             const nextOrder = [...entries.entries()]
                 .sort(([, left], [, right]) => comparePeers(left.peer, right.peer))
                 .map(([key]) => key);
-            if (!sameOrder(rowOrder, nextOrder)) {
+            if (!sameStrings(rowOrder, nextOrder)) {
                 for (const key of nextOrder)
                     peerGroup.remove(entries.get(key).row);
                 for (const key of nextOrder)
@@ -175,11 +181,6 @@ function installPeerStatusCss() {
     peerStatusCssInstalled = true;
 }
 
-function sameOrder(left, right) {
-    return left.length === right.length &&
-        left.every((value, index) => value === right[index]);
-}
-
 function createPeerRow() {
     const row = new Adw.ActionRow({
         subtitle_lines: 1,
@@ -191,9 +192,14 @@ function createPeerRow() {
         css_classes: ['dim-label'],
         valign: Gtk.Align.CENTER,
     });
+    const entry = {icon, latency, peer: {}, row};
+    const copy = createCopyButton(() => hostAddress(entry.peer.ip || entry.peer.ipv6),
+        'Copy peer IP address');
     row.add_prefix(icon);
     row.add_suffix(latency);
-    return {icon, latency, peer: {}, row};
+    row.add_suffix(copy);
+    entry.copy = copy;
+    return entry;
 }
 
 function updatePeerRow(entry, peer) {
@@ -217,6 +223,29 @@ function updatePeerRow(entry, peer) {
         ? `${Math.round(peer.latencyMs)} ms`
         : '';
     entry.latency.visible = Boolean(entry.latency.label);
+    entry.copy.visible = Boolean(peer.ip || peer.ipv6);
+    entry.row.tooltip_text = peerDetails(peer);
+}
+
+function peerDetails(peer) {
+    const lines = [peer.fqdn, `Status: ${peer.state}`];
+    if (peer.bytesRx || peer.bytesTx) {
+        lines.push(`Received: ${GLib.format_size(peer.bytesRx)}`);
+        lines.push(`Sent: ${GLib.format_size(peer.bytesTx)}`);
+    }
+    if (peer.lastHandshake)
+        lines.push(`Last handshake: ${timeAgo(peer.lastHandshake)}`);
+    return lines.filter(Boolean).join('\n');
+}
+
+function timeAgo(timestampSeconds) {
+    const seconds = Math.max(0, Math.floor(Date.now() / 1000) - timestampSeconds);
+    if (seconds < 60)
+        return 'just now';
+    const units = [[86400, 'day'], [3600, 'hour'], [60, 'minute']];
+    const [size, unit] = units.find(([unitSeconds]) => seconds >= unitSeconds);
+    const count = Math.floor(seconds / size);
+    return `${count} ${unit}${count === 1 ? '' : 's'} ago`;
 }
 
 function peerKey(peer, index) {

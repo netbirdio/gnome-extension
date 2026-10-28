@@ -10,6 +10,9 @@ SYMBOLIC_STATUS_ICONS := $(wildcard \
 all: check package
 
 check: lint syntax test
+	@command -v rg >/dev/null || { \
+		echo "ripgrep (rg) is required; see Development in README.md" >&2; exit 1; \
+	}
 	@node -e "JSON.parse(require('fs').readFileSync('metadata.json'))"
 	@if rg -n "gi://(Adw|Gdk|Gtk)" extension.js shell; then \
 		echo "GTK/Adwaita import found in the GNOME Shell process" >&2; exit 1; \
@@ -52,17 +55,7 @@ ui-smoke: check
 	@gjs -m tests/prefs-smoke.js
 
 package: check
-	@mkdir -p build
-	@gnome-extensions pack --force --out-dir=build \
-		--extra-source=LICENSE \
-		--extra-source=LICENSES \
-		--extra-source=icons \
-		--extra-source=netbird \
-		--extra-source=prefs \
-		--extra-source=shell \
-		.
-	@test -f "$(ZIP)"
-	@echo "Built $(ZIP)"
+	@./install.sh --pack-only
 
 clean:
 	@rm -f "$(ZIP)"

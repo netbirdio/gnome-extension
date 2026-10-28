@@ -238,11 +238,13 @@ export async function getNetBirdStatus({
     cancellable = null,
     timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
-    const result = await callDaemon('Status', {
-        getFullPeerStatus: true,
-        shouldRunProbes: false,
-    }, {cancellable, timeoutMs});
-    const activeProfile = await getActiveProfile({cancellable, timeoutMs});
+    const [result, activeProfile] = await Promise.all([
+        callDaemon('Status', {
+            getFullPeerStatus: true,
+            shouldRunProbes: false,
+        }, {cancellable, timeoutMs}),
+        getActiveProfile({cancellable, timeoutMs}),
+    ]);
     const status = typeof result.data.status === 'string'
         ? result.data.status
         : '';
@@ -250,8 +252,7 @@ export async function getNetBirdStatus({
         ? result.data.daemonVersion
         : '';
 
-    if (daemonVersion && !isNetBirdVersionSupported(daemonVersion))
-        throw new NetBirdVersionError(daemonVersion);
+    checkDaemonVersion(daemonVersion);
 
     return {
         ...result,
@@ -276,8 +277,7 @@ export function subscribeNetBirdStatus({
         cancellable,
         onError,
         onMessage: data => {
-            if (!isNetBirdVersionSupported(data.daemonVersion))
-                throw new NetBirdVersionError(data.daemonVersion);
+            checkDaemonVersion(data.daemonVersion);
             onStatus(normalizeStatus(data));
         },
     });
@@ -379,11 +379,22 @@ export function isNetBirdVersionSupported(version) {
     return true;
 }
 
+// Only releases are held to the minimum. Source builds report "development"
+// and an empty version means the daemon did not say; neither is a known-old
+// release, so both pass, the same for one-off requests and the status stream.
+export function checkDaemonVersion(version) {
+    if (parseVersion(version) && !isNetBirdVersionSupported(version))
+        throw new NetBirdVersionError(String(version));
+}
+
+export function versionErrorMessage(version) {
+    return `NetBird ${version} is too old. Update to NetBird ` +
+        `${NETBIRD_MINIMUM_VERSION} or later.`;
+}
+
 export class NetBirdVersionError extends Error {
     constructor(version) {
-        super(
-            `NetBird ${version} is too old. Update to NetBird ` +
-            `${NETBIRD_MINIMUM_VERSION} or later.`);
+        super(versionErrorMessage(version));
 
         this.name = 'NetBirdVersionError';
         this.minimumVersion = NETBIRD_MINIMUM_VERSION;

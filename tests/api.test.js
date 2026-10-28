@@ -20,6 +20,7 @@ GLib.setenv('NETBIRD_GNOME_TEST_SOCKET', TEST_SOCKET_PATH, true);
 
 const {
     addProfile,
+    checkDaemonVersion,
     connectNetBird,
     createDebugBundle,
     deselectNetworks,
@@ -34,6 +35,7 @@ const {
     listProfiles,
     loginNetBird,
     NETBIRD_MINIMUM_VERSION,
+    NetBirdVersionError,
     NetBirdClient,
     NetBirdDaemonError,
     removeProfile,
@@ -400,6 +402,12 @@ const tests = [
             state: 'Connecting',
         }, 'peer normalization');
     }],
+    ['a peer that never shook hands has no handshake time', () => {
+        // Go encodes its zero time, year 1, which parses to a negative timestamp.
+        const peer = normalizePeer({lastWireguardHandshake: '0001-01-01T00:00:00Z'});
+        if (peer.lastHandshake !== 0)
+            throw new Error(`expected no handshake, got ${peer.lastHandshake}`);
+    }],
     ['profile model normalizes every field', () => {
         assertObjectEqual(normalizeProfile({id: 3, isActive: 1, name: null}), {
             id: '', isActive: true, name: '',
@@ -502,6 +510,22 @@ const tests = [
                 '{"status":"Connected","daemonVersion":"0.75.1"}',
                 '0.75.1'),
             'too old')],
+    ['development and unreported daemon versions are accepted', () =>
+        assertStatusDaemonVersion(
+            '{"status":"Connected","daemonVersion":"development"}',
+            'development')],
+    ['checkDaemonVersion only rejects old releases', () => {
+        for (const version of ['0.76.0', 'v0.81.2', 'development', '', undefined])
+            checkDaemonVersion(version);
+        let rejection = null;
+        try {
+            checkDaemonVersion('0.75.1');
+        } catch (error) {
+            rejection = error;
+        }
+        if (!(rejection instanceof NetBirdVersionError) || rejection.version !== '0.75.1')
+            throw new Error(`0.75.1 was not rejected as too old: ${rejection}`);
+    }],
     ['listProfiles', async () => {
         const result = await listProfiles({timeoutMs: TEST_TIMEOUT_MS});
         if (result.activeProfile !== 'default')

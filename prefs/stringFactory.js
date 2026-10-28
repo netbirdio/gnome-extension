@@ -42,3 +42,10 @@ export function createCheckedStringFactory() {
     });
     return factory;
 }
+
+// Models are only replaced when their strings change; swapping one while its
+// popup is open loses the selection, or crashes GTK if a row is activating.
+export function sameStrings(left, right) {
+    return left.length === right.length &&
+        left.every((value, index) => value === right[index]);
+}
