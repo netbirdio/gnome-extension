@@ -82,9 +82,9 @@ export function createHomePage(actions) {
     });
     content.append(stateLabel);
 
-    const fqdnLabel = detailLabel();
-    const ipv4Label = detailLabel();
-    const ipv6Label = detailLabel();
+    const fqdnLabel = detailLabel(actions.onCopied);
+    const ipv4Label = detailLabel(actions.onCopied);
+    const ipv6Label = detailLabel(actions.onCopied);
     content.append(fqdnLabel);
     content.append(ipv4Label);
     content.append(ipv6Label);
@@ -184,12 +184,13 @@ function updateBanner(banner, snapshot) {
     }
 }
 
-// Addresses are copied whole: a click selects all of it, the menu only offers
+// Addresses are copied whole: a click copies all of it, the menu only offers
 // Copy, and Ctrl+C copies it. GTK's own label gestures would allow partial
 // selections and offer Cut, Paste, and Delete, which mean nothing here.
-function detailLabel() {
+function detailLabel(onCopied) {
     const label = new Gtk.Label({
         css_classes: ['dim-label', 'monospace'],
+        cursor: Gdk.Cursor.new_from_name('pointer', null),
         ellipsize: Pango.EllipsizeMode.END,
         selectable: true,
         visible: false,
@@ -197,7 +198,10 @@ function detailLabel() {
 
     const actions = new Gio.SimpleActionGroup();
     const copy = new Gio.SimpleAction({name: 'copy'});
-    copy.connect('activate', () => label.get_clipboard().set(label.label));
+    copy.connect('activate', () => {
+        label.get_clipboard().set(label.label);
+        onCopied();
+    });
     actions.add_action(copy);
     label.insert_action_group('address', actions);
 
@@ -225,10 +229,12 @@ function detailLabel() {
     });
     click.connect('pressed', (gesture, _presses, x, y) => {
         gesture.set_state(Gtk.EventSequenceState.CLAIMED);
-        if (gesture.get_current_button() === Gdk.BUTTON_SECONDARY)
+        if (gesture.get_current_button() === Gdk.BUTTON_SECONDARY) {
             showMenu(x, y);
-        else
+        } else {
             selectAll();
+            copy.activate(null);
+        }
     });
     label.add_controller(click);
 
@@ -253,6 +259,6 @@ function detailLabel() {
 
 function setDetail(label, text) {
     label.label = text;
-    label.tooltip_text = text;
+    label.tooltip_text = `${text}\nClick to copy`;
     label.visible = Boolean(text);
 }

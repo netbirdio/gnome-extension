@@ -64,6 +64,10 @@ export function populateMainWindow(window) {
     toolbar.add_top_bar(header);
 
     const home = createHomePage({
+        onCopied: () => toastOverlay.add_toast(new Adw.Toast({
+            timeout: 2,
+            title: 'Copied to clipboard',
+        })),
         onSelectExitNode: id => void controller.selectExitNode(id),
         onSocketHelp: () => showSocketHelp(window),
         onToggleConnection: () => void controller.toggleConnection(),

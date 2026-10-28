@@ -44,6 +44,8 @@ export const NetBirdToggle = GObject.registerClass({
 
         this._ipAddress = '';
         this._copyIpItem = this.menu.addAction('Copy IP Address', () => {
+            // Only writes, and only when the person picks this item; declared
+            // in the metadata description as EGO's review guidelines require.
             St.Clipboard.get_default().set_text(
                 St.ClipboardType.CLIPBOARD, this._ipAddress);
             this.menu.close();
