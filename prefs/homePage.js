@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import Adw from 'gi://Adw?version=1';
-import Gdk from 'gi://Gdk?version=4.0';
+import Adw from 'gi://Adw';
+import Gdk from 'gi://Gdk';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
-import Gtk from 'gi://Gtk?version=4.0';
+import Gtk from 'gi://Gtk';
 import Pango from 'gi://Pango';
 
 import {versionErrorMessage} from '../netbird/client.js';

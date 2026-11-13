@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import Adw from 'gi://Adw?version=1';
-import Gtk from 'gi://Gtk?version=4.0';
+import Adw from 'gi://Adw';
+import Gtk from 'gi://Gtk';
 
 import {createCommandView} from './commandView.js';
 import {presentDebugBundleDialog} from './debugBundleDialog.js';

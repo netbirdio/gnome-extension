@@ -480,6 +480,31 @@ const tests = [
         assertSubscriptionError('stream-invalid-frame', 'invalid frame')],
     ['status subscription reports unexpected stream completion', () =>
         assertSubscriptionError('stream-empty', 'stream ended')],
+    ['an already cancelled request is cancelled, not timed out', async () => {
+        const cancellable = new Gio.Cancellable();
+        cancellable.cancel();
+        try {
+            await getNetBirdStatus({cancellable, timeoutMs: 50});
+        } catch (error) {
+            if (!error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                throw new Error(`expected a cancellation, got ${error}`, {cause: error});
+            return;
+        }
+        throw new Error('an already cancelled request succeeded');
+    }],
+    ['an already cancelled subscription stays silent', () => new Promise((resolve, reject) => {
+        const cancellable = new Gio.Cancellable();
+        cancellable.cancel();
+        subscribeNetBirdStatus({
+            cancellable,
+            onError: error => reject(new Error(`unexpected error: ${error}`)),
+            onStatus: () => reject(new Error('unexpected status')),
+        });
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
+            resolve();
+            return GLib.SOURCE_REMOVE;
+        });
+    })],
     ['getNetBirdStatus connected daemon state', () =>
         assertStatusConnected(
             '{"status":"Connected"}',

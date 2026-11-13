@@ -4,5 +4,5 @@
   "uuid": "gnome@netbird.io",
   "shell-version": ["46", "47", "48", "49", "50", "51"],
   "url": "https://github.com/netbirdio/gnome-extension",
-  "version-name": "4"
+  "version-name": "5"
 }

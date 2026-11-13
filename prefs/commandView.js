@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import GLib from 'gi://GLib';
-import Gtk from 'gi://Gtk?version=4.0';
+import Gtk from 'gi://Gtk';
 
 const WRAP_AT = 36;
 

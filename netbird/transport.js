@@ -27,10 +27,19 @@ export async function callDaemon(method, body = {}, {
     let timedOut = false;
     const requestCancellable = new Gio.Cancellable();
 
-    if (cancellable) {
-        if (cancellable.is_cancelled()) {
-            requestCancellable.cancel();
-        } else {
+    try {
+        if (timeoutMs > 0) {
+            timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, timeoutMs, () => {
+                timeoutId = 0;
+                timedOut = true;
+                requestCancellable.cancel();
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+
+        if (cancellable) {
+            // Gio.Cancellable.connect() runs the handler immediately when the
+            // cancellable is already cancelled, so the timeout is always removed.
             cancellableHandlerId = cancellable.connect(() => {
                 if (timeoutId) {
                     GLib.Source.remove(timeoutId);
@@ -39,18 +48,7 @@ export async function callDaemon(method, body = {}, {
                 requestCancellable.cancel();
             });
         }
-    }
 
-    if (timeoutMs > 0 && !requestCancellable.is_cancelled()) {
-        timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, timeoutMs, () => {
-            timeoutId = 0;
-            timedOut = true;
-            requestCancellable.cancel();
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    try {
         const client = new Gio.SocketClient();
         const address = Gio.UnixSocketAddress.new(socketPath);
         const connection = await connectAsync(client, address, requestCancellable);
@@ -131,13 +129,10 @@ class DaemonSubscription {
         this._requestBytes = buildRequest(method, body);
 
         if (cancellable) {
-            if (cancellable.is_cancelled()) {
+            // Runs immediately when the cancellable is already cancelled.
+            this._externalHandlerId = cancellable.connect(() => {
                 this._cancellable.cancel();
-            } else {
-                this._externalHandlerId = cancellable.connect(() => {
-                    this._cancellable.cancel();
-                });
-            }
+            });
         }
 
         void this._run();

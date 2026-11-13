@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import Gtk from 'gi://Gtk?version=4.0';
+import Gtk from 'gi://Gtk';
 import Pango from 'gi://Pango';
 
 export function createEllipsizedStringFactory(widthChars, alignEnd = false) {
